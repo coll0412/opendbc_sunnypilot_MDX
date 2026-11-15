@@ -32,6 +32,16 @@
     ],
     "package": "All"
   },
+  "Acura MDX 2018": {
+    "platform": "ACURA_MDX_3G_SERIAL",
+    "make": "Acura",
+    "brand": "honda",
+    "model": "MDX",
+    "year": [
+      "2018"
+    ],
+    "package": "AcuraWatch Plus, requires LKAS/CAN adapter board"
+  },
   "Acura MDX 2022-24": {
     "platform": "ACURA_MDX_4G",
     "make": "Acura",

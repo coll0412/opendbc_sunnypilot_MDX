@@ -6,7 +6,7 @@ from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.values import CAR, DBC, STEER_THRESHOLD, HondaFlags, CruiseButtons, CruiseSettings, \
-                                                 GearShifter, CarControllerParams
+                                                 GearShifter, CarControllerParams, SERIAL_STEERING
 from opendbc.car.interfaces import CarStateBase
 
 from opendbc.sunnypilot.car.honda.carstate_ext import CarStateExt
@@ -75,6 +75,8 @@ class CarState(CarStateBase, CarStateExt):
     # used for car hud message
     # TODO: find CAR_SPEED for HONDA_ODYSSEY_TWN or use ACC_HUD w/ detection
     self.is_metric = self.CP.carFingerprint in (CAR.HONDA_ODYSSEY_TWN,) or not cp.vl["CAR_SPEED"]["IMPERIAL_UNIT"]
+    if self.CP.carFingerprint in SERIAL_STEERING:
+      self.is_metric = False  # carried over from the original MDX port, which forced imperial units
     self.v_cruise_factor = CV.MPH_TO_MS if self.dynamic_v_cruise_units and not self.is_metric else CV.KPH_TO_MS
 
     # ******************* parse out can *******************
@@ -99,7 +101,11 @@ class CarState(CarStateBase, CarStateExt):
 
     ret.seatbeltUnlatched = bool(cp.vl["SEATBELT_STATUS"]["SEATBELT_DRIVER_LAMP"] or not cp.vl["SEATBELT_STATUS"]["SEATBELT_DRIVER_LATCHED"])
 
-    steer_status = self.steer_status_values[cp.vl["STEER_STATUS"]["STEER_STATUS"]]
+    # Serial steering cars have no EPS on CAN: the LKAS/CAN adapter board reports driver torque and EPS/board
+    # status in STEER_STATUS on the camera bus
+    cp_steer = cp_cam if self.CP.carFingerprint in SERIAL_STEERING else cp
+
+    steer_status = self.steer_status_values[cp_steer.vl["STEER_STATUS"]["STEER_STATUS"]]
     ret.steerFaultPermanent = steer_status not in ("NORMAL", "NO_TORQUE_ALERT_1", "NO_TORQUE_ALERT_2", "LOW_SPEED_LOCKOUT", "TMP_FAULT")
     if self.CP.flags & HondaFlags.BOSCH_ALT_RADAR:
       # TODO: See if this logic works for all other Honda
@@ -162,7 +168,7 @@ class CarState(CarStateBase, CarStateExt):
 
     ret.gasPressed = cp.vl["POWERTRAIN_DATA"]["PEDAL_GAS"] > 1e-5
 
-    ret.steeringTorque = cp.vl["STEER_STATUS"]["STEER_TORQUE_SENSOR"]
+    ret.steeringTorque = cp_steer.vl["STEER_STATUS"]["STEER_TORQUE_SENSOR"]
     ret.steeringPressed = abs(ret.steeringTorque) > STEER_THRESHOLD.get(self.CP.carFingerprint, 1200)
 
     if self.CP.flags & HondaFlags.BOSCH:

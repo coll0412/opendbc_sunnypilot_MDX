@@ -1,6 +1,6 @@
 from opendbc.car import CanBusBase
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.honda.values import (HondaFlags, HONDA_BOSCH_ALT_RADAR, CarControllerParams)
+from opendbc.car.honda.values import (HondaFlags, HONDA_BOSCH_ALT_RADAR, CarControllerParams, SERIAL_STEERING)
 from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 
 # CAN bus layout with relay
@@ -24,6 +24,12 @@ class CanBus(CanBusBase):
     else:
       self._pt, self._radar, self._lkas = self.offset, self.offset + 1, self.offset
 
+    # Serial steering cars steer through an LKAS/CAN adapter board on the camera bus.
+    # Only STEERING_CONTROL moves there; LKAS_HUD and the other LKAS messages stay on the lkas bus
+    self._steering = self._lkas
+    if CP is not None and CP.carFingerprint in SERIAL_STEERING:
+      self._steering = self.camera
+
   @property
   def pt(self) -> int:
     return self._pt
@@ -39,6 +45,10 @@ class CanBus(CanBusBase):
   @property
   def lkas(self) -> int:
     return self._lkas
+
+  @property
+  def steering(self) -> int:
+    return self._steering
 
   # B-CAN is forwarded to ACC-CAN radar side (CAN 0 on fake ethernet port)
   @property
@@ -129,7 +139,7 @@ def create_steering_control(packer, CAN, apply_torque, lkas_active, tja_control)
   if tja_control:
     values["STEER_DOWN_TO_ZERO"] = lkas_active
 
-  return packer.make_can_msg("STEERING_CONTROL", CAN.lkas, values)
+  return packer.make_can_msg("STEERING_CONTROL", CAN.steering, values)
 
 
 def create_bosch_supplemental_1(packer, CAN):

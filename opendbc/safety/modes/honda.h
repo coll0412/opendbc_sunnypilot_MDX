@@ -364,10 +364,26 @@ static safety_config honda_nidec_init(uint16_t param) {
     {0x200, 0, 6, .check_relay = false},
   };
 
+  // Serial steering (e.g. 2018 Acura MDX): the stock LKAS camera talks to the EPS over LIN/serial, not CAN.
+  // An LKAS/CAN adapter board on the camera side (bus 2) receives STEERING_CONTROL (0xE4) and drives the EPS,
+  // so steering must also be allowed on bus 2. The car has no 0xE4 on bus 2, so no relay check is needed.
+  // The 0xE4 steer safety check in honda_tx_hook is bus-agnostic, so it applies here too.
+  static CanMsg HONDA_N_SERIAL_STEERING_TX_MSGS[] = {
+    HONDA_N_COMMON_TX_MSGS
+    {0xE4, 2, 5, .check_relay = false},
+  };
+
+  static CanMsg HONDA_N_SERIAL_STEERING_INTERCEPTOR_TX_MSGS[] = {
+    HONDA_N_COMMON_TX_MSGS
+    {0x200, 0, 6, .check_relay = false},
+    {0xE4, 2, 5, .check_relay = false},
+  };
+
   const uint16_t HONDA_PARAM_NIDEC_ALT = 4;
 
   const uint16_t HONDA_PARAM_SP_NIDEC_HYBRID = 1;
   const uint16_t HONDA_PARAM_GAS_INTERCEPTOR = 2;
+  const uint16_t HONDA_PARAM_SP_NIDEC_SERIAL_STEERING = 4;
 
   honda_hw = HONDA_NIDEC;
   honda_brake = 0;
@@ -384,6 +400,7 @@ static safety_config honda_nidec_init(uint16_t param) {
 
   honda_nidec_hybrid = GET_FLAG(current_safety_param_sp, HONDA_PARAM_SP_NIDEC_HYBRID);
   enable_gas_interceptor = GET_FLAG(current_safety_param_sp, HONDA_PARAM_GAS_INTERCEPTOR);
+  bool enable_serial_steering = GET_FLAG(current_safety_param_sp, HONDA_PARAM_SP_NIDEC_SERIAL_STEERING);
 
   if (enable_nidec_alt) {
     // For Nidecs with main on signal on an alternate msg (missing 0x326)
@@ -403,7 +420,11 @@ static safety_config honda_nidec_init(uint16_t param) {
     SET_RX_CHECKS(honda_nidec_common_rx_checks, ret);
   }
 
-  SET_TX_MSGS(HONDA_N_TX_MSGS, ret);
+  if (enable_serial_steering) {
+    SET_TX_MSGS(HONDA_N_SERIAL_STEERING_TX_MSGS, ret);
+  } else {
+    SET_TX_MSGS(HONDA_N_TX_MSGS, ret);
+  }
 
   if (enable_gas_interceptor) {
     if (enable_nidec_alt) {
@@ -424,7 +445,11 @@ static safety_config honda_nidec_init(uint16_t param) {
       SET_RX_CHECKS(honda_nidec_common_interceptor_rx_checks, ret);
     }
 
-    SET_TX_MSGS(HONDA_N_INTERCEPTOR_TX_MSGS, ret);
+    if (enable_serial_steering) {
+      SET_TX_MSGS(HONDA_N_SERIAL_STEERING_INTERCEPTOR_TX_MSGS, ret);
+    } else {
+      SET_TX_MSGS(HONDA_N_INTERCEPTOR_TX_MSGS, ret);
+    }
   }
 
   return ret;

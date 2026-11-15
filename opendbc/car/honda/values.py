@@ -56,9 +56,23 @@ class CarControllerParams:
       self.STEER_MAX = 32767  # TODO: determine if there is a dead zone at the top end
     elif CP.carFingerprint == CAR.HONDA_PILOT_4G_MMR:
       self.STEER_MAX = 3628
+    elif CP.carFingerprint in SERIAL_STEERING:
+      # LKAS/CAN adapter board: the EPS faults if the LIN steer value exceeds ~241 for several frames
+      self.STEER_MAX = SerialSteeringLimits.STEER_MAX
     else:
       # Odyssey MMR uses up to 2560 for LKA; higher RDM commands are nonlinear and also apply brake drag.
       self.STEER_MAX = 2560
+
+
+# Serial steering cars (LKAS/CAN adapter board): the board's LIN steer value is limited to about +/-240,
+# and torque is limited symmetrically based on driver torque (STEER_STATUS.STEER_TORQUE_SENSOR, about +/-256)
+class SerialSteeringLimits:
+  STEER_MAX = 239
+  STEER_DELTA_UP = 5
+  STEER_DELTA_DOWN = 9
+  STEER_DRIVER_ALLOWANCE = 25
+  STEER_DRIVER_MULTIPLIER = 18
+  STEER_DRIVER_FACTOR = 1
 
 
 class HondaSafetyFlags(IntFlag):
@@ -130,6 +144,11 @@ class HondaCarDocs(CarDocs):
       self.car_parts.custom_parts_url = "https://shop.retropilot.org/product/honda-clarity-proxy-board-kit"
       self.support_type: SupportType = SupportType.COMMUNITY
       self.support_link: str = "community"
+
+    if CP.carFingerprint in SERIAL_STEERING:
+      # requires an LKAS/CAN adapter board between the LKAS camera and the EPS (serial/LIN steering)
+      self.support_type = SupportType.COMMUNITY
+      self.support_link = "community"
 
 
 class Footnote(Enum):
@@ -429,6 +448,14 @@ class CAR(Platforms):
     radar_dbc_dict('honda_clarity_hybrid_2018_can_generated'),
     flags=HondaFlags.HAS_ALL_DOOR_STATES,
   )
+  # The LKAS camera steers the EPS over LIN (serial) instead of CAN. openpilot steers through an
+  # LKAS/CAN adapter board (LINInterfaceV2) on the camera bus, see SERIAL_STEERING
+  ACURA_MDX_3G_SERIAL = HondaNidecPlatformConfig(
+    [HondaCarDocs("Acura MDX 2018", "AcuraWatch Plus, requires LKAS/CAN adapter board")],
+    CarSpecs(wheelbase=2.82, steerRatio=15.66, centerToFrontRatio=0.428, tireStiffnessFactor=0.444),  # as spec
+    radar_dbc_dict('acura_mdx_2018_can_generated'),
+    flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES | HondaFlags.HAS_ALL_DOOR_STATES,
+  )
 
 
 DBC = CAR.create_dbc_map()
@@ -437,6 +464,10 @@ HONDA_BOSCH = frozenset(c for c in CAR if c.config.flags & HondaFlags.BOSCH)
 HONDA_BOSCH_ALT_RADAR = frozenset(c for c in CAR if c.config.flags & HondaFlags.BOSCH_ALT_RADAR)
 HONDA_BOSCH_RADARLESS = frozenset(c for c in CAR if c.config.flags & HondaFlags.BOSCH_RADARLESS)
 HONDA_BOSCH_CANFD = frozenset(c for c in CAR if c.config.flags & HondaFlags.BOSCH_CANFD)
+
+# Nidec cars whose LKAS camera steers the EPS over LIN (serial). STEERING_CONTROL goes to an LKAS/CAN adapter
+# board on the camera bus (bus 2), which returns STEER_STATUS (driver torque, board/EPS status) on the same bus
+SERIAL_STEERING = frozenset({CAR.ACURA_MDX_3G_SERIAL})
 
 
 STEER_THRESHOLD = {
@@ -451,6 +482,7 @@ STEER_THRESHOLD = {
   CAR.HONDA_CRV_6G: 600,
   CAR.HONDA_CITY_7G: 600,
   CAR.HONDA_NBOX_2G: 600,
+  CAR.ACURA_MDX_3G_SERIAL: 25,  # adapter board reports driver torque in about +/-256
 }
 
 

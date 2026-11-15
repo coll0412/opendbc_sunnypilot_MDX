@@ -4,7 +4,8 @@ from opendbc.car import get_safety_config, structs, uds
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.honda.hondacan import CanBus
-from opendbc.car.honda.values import CarControllerParams, HondaFlags, CAR, HondaSafetyFlags, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS
+from opendbc.car.honda.values import CarControllerParams, HondaFlags, CAR, HondaSafetyFlags, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS, \
+                                     SERIAL_STEERING
 from opendbc.car.honda.carcontroller import CarController
 from opendbc.car.honda.carstate import CarState
 from opendbc.car.honda.radar_interface import RadarInterface
@@ -177,6 +178,11 @@ class CarInterface(CarInterfaceBase):
     elif candidate == CAR.HONDA_CLARITY:
       pass
 
+    elif candidate in SERIAL_STEERING:
+      # the LKAS/CAN adapter board adds latency between STEERING_CONTROL and the EPS (LIN, 9600 baud)
+      ret.steerActuatorDelay = 0.3
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+
     else:
       ret.steerActuatorDelay = 0.15
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
@@ -204,7 +210,7 @@ class CarInterface(CarInterfaceBase):
     # min speed to enable ACC. if car can do stop and go, then set enabling speed
     # to a negative value, so it won't matter. Otherwise, add 0.5 mph margin to not
     # conflict with PCM acc
-    ret.autoResumeSng = bool(ret.flags & HondaFlags.BOSCH) or candidate == CAR.HONDA_CIVIC
+    ret.autoResumeSng = bool(ret.flags & HondaFlags.BOSCH) or candidate in (CAR.HONDA_CIVIC, *SERIAL_STEERING)
     if ret.autoResumeSng:
       ret.minEnableSpeed = -1.
     elif candidate == CAR.HONDA_ODYSSEY_TWN:
@@ -275,6 +281,10 @@ class CarInterface(CarInterfaceBase):
 
     if ret.enableGasInterceptor and candidate not in HONDA_BOSCH:
       ret.safetyParam |= HondaSafetyFlagsSP.GAS_INTERCEPTOR
+
+    # These cars steer through an LKAS/CAN adapter board on the camera bus
+    if candidate in SERIAL_STEERING:
+      ret.safetyParam |= HondaSafetyFlagsSP.NIDEC_SERIAL_STEERING
 
     stock_cp.autoResumeSng = stock_cp.autoResumeSng or ret.enableGasInterceptor
     stock_cp.minEnableSpeed = -1. if ret.enableGasInterceptor else stock_cp.minEnableSpeed

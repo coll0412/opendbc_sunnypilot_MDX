@@ -17,3 +17,4 @@ class HondaFlagsSP(IntFlag):
 class HondaSafetyFlagsSP:
   NIDEC_HYBRID = 1
   GAS_INTERCEPTOR = 2
+  NIDEC_SERIAL_STEERING = 4  # allow STEERING_CONTROL on the camera bus for an LKAS/CAN adapter board

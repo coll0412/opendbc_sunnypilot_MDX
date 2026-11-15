@@ -395,6 +395,44 @@ class TestHondaNidecPcmAltSafety(TestHondaNidecPcmSafety):
     bus = self.PT_BUS if bus is None else bus
     values = {"CRUISE_BUTTONS": buttons, "MAIN_ON": main_on}
     return self.packer.make_can_msg_safety("SCM_BUTTONS", bus, values)
+class TestHondaNidecPcmSerialSteeringSafety(TestHondaNidecPcmAltSafety):
+  """
+    Covers the Honda Nidec safety mode with serial steering: STEERING_CONTROL is also allowed on the camera bus,
+    where an LKAS/CAN adapter board drives the EPS over LIN (e.g. 2018 Acura MDX)
+  """
+  DBC = "acura_mdx_2018_can_generated"
+
+  TX_MSGS = HONDA_N_COMMON_TX_MSGS + [[0xE4, 2]]
+
+  def setUp(self):
+    # the SP param must be set before the safety hooks are initialized
+    libsafety_py.libsafety.set_current_safety_param_sp(HondaSafetyFlagsSP.NIDEC_SERIAL_STEERING)
+    super().setUp()
+
+  def tearDown(self):
+    self.safety.set_current_safety_param_sp(0)
+    super().tearDown()
+
+  def test_steer_safety_check_camera_bus(self):
+    # steering on the camera bus must follow the same rules as on the powertrain bus
+    def steer_msg(steer):
+      return self.packer.make_can_msg_safety("STEERING_CONTROL", 2, {"STEER_TORQUE": steer})
+
+    self.safety.set_controls_allowed(0)
+    self.assertTrue(self._tx(steer_msg(0x0000)))
+    self.assertFalse(self._tx(steer_msg(0x00F0)))
+    self.assertFalse(self._tx(steer_msg(-0x00F0)))
+    self.safety.set_controls_allowed(1)
+    self.assertTrue(self._tx(steer_msg(0x00F0)))
+    self.assertTrue(self._tx(steer_msg(-0x00F0)))
+
+  def test_camera_bus_steering_needs_param(self):
+    # without the serial steering param, STEERING_CONTROL on the camera bus stays blocked
+    self.safety.set_current_safety_param_sp(0)
+    self._reset_safety_hooks()
+    self.safety.set_controls_allowed(1)
+    msg = self.packer.make_can_msg_safety("STEERING_CONTROL", 2, {"STEER_TORQUE": 0})
+    self.assertFalse(self._tx(msg))
 class TestHondaNidecAltGasInterceptorSafety(GasInterceptorSafetyTest, HondaButtonEnableBase, TestHondaNidecSafetyBase):
   """
     Covers the Honda Nidec safety mode with alt SCM messages and gas interceptor, switches to a button-enable car

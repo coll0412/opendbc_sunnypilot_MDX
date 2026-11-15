@@ -3,8 +3,9 @@ import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.honda import hondacan
-from opendbc.car.honda.values import CAR, CruiseButtons, HondaFlags, CarControllerParams
+from opendbc.car.honda.values import CAR, CruiseButtons, HondaFlags, CarControllerParams, SERIAL_STEERING, SerialSteeringLimits
 from opendbc.car.interfaces import CarControllerBase
+from opendbc.car.lateral import apply_driver_steer_torque_limits
 
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
@@ -92,6 +93,20 @@ def process_hud_alert(hud_alert):
   return alert_fcw, alert_steer_required
 
 
+def apply_serial_steering_torque_limits(apply_torque, apply_torque_last, driver_torque, LIMITS):
+  # Same as apply_driver_steer_torque_limits, but the driver-torque limit is applied to both directions:
+  # whichever direction is reduced the most sets the limit for both
+  driver_max_torque = LIMITS.STEER_MAX + (LIMITS.STEER_DRIVER_ALLOWANCE + driver_torque * LIMITS.STEER_DRIVER_FACTOR) * LIMITS.STEER_DRIVER_MULTIPLIER
+  driver_min_torque = -LIMITS.STEER_MAX + (-LIMITS.STEER_DRIVER_ALLOWANCE + driver_torque * LIMITS.STEER_DRIVER_FACTOR) * LIMITS.STEER_DRIVER_MULTIPLIER
+  max_steer_allowed = max(min(LIMITS.STEER_MAX, driver_max_torque), 0)
+  min_steer_allowed = min(max(-LIMITS.STEER_MAX, driver_min_torque), 0)
+  symmetric_limit = min(max_steer_allowed, -min_steer_allowed)
+  apply_torque = np.clip(apply_torque, -symmetric_limit, symmetric_limit)
+
+  # the stock function then applies the (now looser) driver limits and the rate limits
+  return apply_driver_steer_torque_limits(apply_torque, apply_torque_last, driver_torque, LIMITS)
+
+
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface,
                     EpsModCarController):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -117,6 +132,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.gas = 0.0
     self.brake = 0.0
     self.last_torque = 0.0
+    self.apply_torque_last = 0
 
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
@@ -152,6 +168,13 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     apply_torque = int(np.clip(-limited_torque, -1.0, 1.0) * self.params.STEER_MAX)
     if self.eps_mod_lookup is not None:
       apply_torque = EpsModCarController.get_apply_torque(self, limited_torque)
+
+    # Serial steering (LKAS/CAN adapter board): limit torque by driver torque and rate, like other torque-limited brands
+    if self.CP.carFingerprint in SERIAL_STEERING:
+      if not CC.latActive:
+        apply_torque = 0
+      apply_torque = apply_serial_steering_torque_limits(apply_torque, self.apply_torque_last, CS.out.steeringTorque, SerialSteeringLimits)
+    self.apply_torque_last = apply_torque
 
     # Send CAN commands
     can_sends = []
