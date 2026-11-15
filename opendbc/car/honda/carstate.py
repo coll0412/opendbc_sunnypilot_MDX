@@ -122,6 +122,13 @@ class CarState(CarStateBase, CarStateExt):
       ret.steerFaultPermanent = False
       ret.steerFaultTemporary = False
 
+    if self.CP.carFingerprint in SERIAL_STEERING:
+      # EPS status bits passed through by the adapter board recover on their own, e.g. when the driver overpowers
+      # the wheel, so they are only temporary faults (silent while steering is pressed). The only permanent fault is
+      # the board's own fatal error, which it latches until power is cycled and then stops applying torque
+      ret.steerFaultPermanent = bool(cp_steer.vl["STEER_STATUS"]["LIN_INTERFACE_FATAL_ERROR"])
+      ret.steerFaultTemporary = steer_status not in ("NORMAL", "LOW_SPEED_LOCKOUT", "NO_TORQUE_ALERT_2")
+
     # All Honda EPS cut off slightly above standstill, some much higher
     # Don't alert in the near-standstill range, but alert for per-vehicle configured minimums above that
     if CarControllerParams.STEER_GLOBAL_MIN_SPEED < ret.vEgo < (self.CP.minSteerSpeed + 0.5):
