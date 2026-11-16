@@ -46,7 +46,9 @@ def apply_mode(CP: structs.CarParams, CP_SP: structs.CarParamsSP, mode: int) -> 
   except (TypeError, ValueError):
     mode = NidecLongMode.MAPPED
 
-  CP_SP.flags &= ~(HondaFlagsSP.NIDEC_LONG_STOCK | HondaFlagsSP.NIDEC_LONG_ADAPTIVE)
+  # keep flags a plain int: card converts CP_SP to capnp, which rejects IntFlag values (e.g. HondaFlagsSP(0))
+  mode_bits = int(HondaFlagsSP.NIDEC_LONG_STOCK.value | HondaFlagsSP.NIDEC_LONG_ADAPTIVE.value)
+  CP_SP.flags = int(CP_SP.flags) & ~mode_bits
   if mode == NidecLongMode.STOCK:
     CP_SP.flags |= HondaFlagsSP.NIDEC_LONG_STOCK.value
     CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV = [0., 5., 35.], [1.2, 0.8, 0.5]

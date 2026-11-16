@@ -56,6 +56,13 @@ class TestNidecLongModes(unittest.TestCase):
       self.assertAlmostEqual(CP.longitudinalTuning.kiV[0], ki, places=4)
       self.assertAlmostEqual(CP.longitudinalActuatorDelay, delay, places=4)
 
+  def test_flags_stay_plain_int(self):
+    # card.py converts CP_SP to capnp, which rejects IntFlag values (crashed card on the device)
+    for mode in (0, 1, 2):
+      CP, CP_SP = get_params()
+      apply_mode(CP, CP_SP, mode)
+      self.assertIs(type(CP_SP.flags), int, f"mode {mode}")
+
   def test_switching_back_clears_flags(self):
     CP, CP_SP = get_params()
     apply_mode(CP, CP_SP, 2)
