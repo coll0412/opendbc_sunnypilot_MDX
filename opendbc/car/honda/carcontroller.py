@@ -2,9 +2,9 @@ import numpy as np
 
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
+from opendbc.car.carlog import carlog
 from opendbc.car.honda import hondacan
-from opendbc.car.honda.values import CAR, CruiseButtons, HondaFlags, CarControllerParams, SERIAL_STEERING, SerialSteeringLimits, \
-                                     SerialSteeringLongitudinal
+from opendbc.car.honda.values import CAR, CruiseButtons, HondaFlags, CarControllerParams, SERIAL_STEERING, SerialSteeringLimits
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 
@@ -12,6 +12,9 @@ from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
 from opendbc.sunnypilot.car.honda.eps_mod import EpsModCarController
+from opendbc.sunnypilot.car.honda.nidec_long import NidecLongMode, get_mode as get_nidec_long_mode
+from opendbc.sunnypilot.car.honda.nidec_long.mapped import mapped_pcm_commands
+from opendbc.sunnypilot.car.honda.nidec_long.adaptive import NidecAdaptiveLongitudinal
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -160,6 +163,11 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.steer_request_fault_hold = 0
     self.near_max_frames = 0
 
+    # ADAPTIVE longitudinal mode: created on first use; the openpilot side injects a persistent store
+    self.nidec_adaptive = None
+    self.nidec_adaptive_failed = False
+    self.nidec_long_store = None
+
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
     actuators = CC.actuators
@@ -235,7 +243,26 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                     0.5]
     # The Honda ODYSSEY seems to have different PCM_ACCEL
     # msgs, is it other cars too?
-    if self.CP_SP.enableGasInterceptor or not CC.longActive:
+    # MDX longitudinal mode (opendbc/sunnypilot/car/honda/nidec_long): STOCK, MAPPED (default) or ADAPTIVE (MVL port)
+    nidec_long_mode = get_nidec_long_mode(self.CP, self.CP_SP)
+    nidec_adaptive_out = None
+    if nidec_long_mode == NidecLongMode.ADAPTIVE and self.nidec_adaptive_failed:
+      nidec_long_mode = NidecLongMode.MAPPED
+    if nidec_long_mode == NidecLongMode.ADAPTIVE and self.CP.openpilotLongitudinalControl:
+      try:
+        if self.nidec_adaptive is None:
+          self.nidec_adaptive = NidecAdaptiveLongitudinal(self.CP, self.params, self.nidec_long_store)
+        nidec_adaptive_out = self.nidec_adaptive.update(CC, CS, self.frame)
+      except Exception:
+        # never take the car process down: log once, run MAPPED for the rest of the drive
+        carlog.exception("honda_nidec_long: adaptive mode failed, falling back to mapped")
+        self.nidec_adaptive_failed = True
+        nidec_long_mode = NidecLongMode.MAPPED
+
+    if nidec_adaptive_out is not None:
+      pcm_speed, pcm_accel = nidec_adaptive_out.pcm_speed, nidec_adaptive_out.pcm_gas
+      self.accel = nidec_adaptive_out.accel
+    elif self.CP_SP.enableGasInterceptor or not CC.longActive:
       pcm_speed = 0.0
       pcm_accel = int(0.0)
     elif self.CP.flags & HondaFlags.NIDEC_ALT_PCM_ACCEL:
@@ -245,19 +272,9 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                      np.clip(CS.out.vEgo + 5.0, 0.0, 100.0)]
       pcm_speed = float(np.interp(gas - brake, pcm_speed_BP, pcm_speed_V))
       pcm_accel = int(1.0 * self.params.NIDEC_GAS_MAX)
-    elif self.CP.carFingerprint in SERIAL_STEERING:
-      # MDX (after the MVL fork's Nidec rework): a continuous PCM speed target instead of the stepped map, which sent
-      # 0 or ~vEgo+5 m/s for small accel changes near the set speed (surge/lift cycling), and a gas limit that includes
-      # aerodynamic drag, so holding speed doesn't depend on the PID integrator (which wound up during the ~1.3 s
-      # throttle delay and overshot). Braking is unchanged
-      L = SerialSteeringLongitudinal
-      pcm_speed = float(np.clip(CS.out.vEgo + L.SPEED_LEAD_TIME * accel, 0.0, 100.0))
-      # the PCM is itself a speed servo: never ask it for more than just above the set speed, so it eases into the
-      # set speed on its own instead of being driven past it by a large lead
-      if hud_control.speedVisible and hud_control.setSpeed > 0.:
-        pcm_speed = min(pcm_speed, hud_control.setSpeed + L.SET_SPEED_MARGIN)
-      drag = float(np.interp(CS.out.vEgo, L.DRAG_BP, L.DRAG_V))
-      pcm_accel = int(np.clip(((accel + drag) / 1.44) / max_accel, 0.0, 1.0) * self.params.NIDEC_GAS_MAX)
+    elif nidec_long_mode == NidecLongMode.MAPPED:
+      # MDX default: continuous PCM speed target capped at the set speed, drag in the gas limit (nidec_long/mapped.py)
+      pcm_speed, pcm_accel = mapped_pcm_commands(CS.out.vEgo, accel, hud_control, max_accel, self.params.NIDEC_GAS_MAX)
     else:
       pcm_speed_V = [0.0,
                      np.clip(CS.out.vEgo - 2.0, 0.0, 100.0),
@@ -289,9 +306,12 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           can_sends.extend(hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas,
                                                         self.stopping_counter, self.CP))
         else:
-          apply_brake = np.clip(self.brake_last - wind_brake, 0.0, 1.0)
-          apply_brake = int(np.clip(apply_brake * self.params.NIDEC_BRAKE_MAX, 0, self.params.NIDEC_BRAKE_MAX - 1))
-          pump_on, self.last_pump_ts = brake_pump_hysteresis(apply_brake, self.apply_brake_last, self.last_pump_ts, ts)
+          if nidec_adaptive_out is not None:
+            apply_brake, pump_on = nidec_adaptive_out.apply_brake, nidec_adaptive_out.pump_on
+          else:
+            apply_brake = np.clip(self.brake_last - wind_brake, 0.0, 1.0)
+            apply_brake = int(np.clip(apply_brake * self.params.NIDEC_BRAKE_MAX, 0, self.params.NIDEC_BRAKE_MAX - 1))
+            pump_on, self.last_pump_ts = brake_pump_hysteresis(apply_brake, self.apply_brake_last, self.last_pump_ts, ts)
 
           pcm_override = True
           can_sends.append(hondacan.create_brake_command(self.packer, self.CAN, apply_brake, pump_on,
@@ -307,7 +327,8 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
       if self.CP.openpilotLongitudinalControl:
         # On Nidec, this also controls longitudinal positive acceleration
         can_sends.append(hondacan.create_acc_hud(self.packer, self.CAN.pt, self.CP, CC.enabled, pcm_speed, pcm_accel,
-                                                 hud_control, hud_v_cruise, CS.is_metric, CS.acc_hud))
+                                                 hud_control, hud_v_cruise, CS.is_metric, CS.acc_hud,
+                                                 set_me_x01=nidec_adaptive_out.set_me_x01 if nidec_adaptive_out else 1))
 
       steering_available = CS.out.cruiseState.available and CS.out.vEgo > max(self.params.STEER_GLOBAL_MIN_SPEED, self.CP.minSteerSpeed)
       can_sends.extend(hondacan.create_lkas_hud(self.packer, self.CAN.lkas, self.CP, hud_control, CC.latActive,
@@ -321,7 +342,9 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           can_sends.append(hondacan.create_legacy_brake_command(self.packer, self.CAN.pt))
         if not (self.CP.flags & HondaFlags.BOSCH):
           self.speed = pcm_speed
-          if not self.CP_SP.enableGasInterceptor:
+          if nidec_adaptive_out is not None:
+            self.gas = nidec_adaptive_out.gas_target
+          elif not self.CP_SP.enableGasInterceptor:
             self.gas = pcm_accel / self.params.NIDEC_GAS_MAX
 
     # Intelligent Cruise Button Management

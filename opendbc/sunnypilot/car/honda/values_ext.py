@@ -12,6 +12,9 @@ class HondaFlagsSP(IntFlag):
   NIDEC_HYBRID = 1
   EPS_MODIFIED = 2
   HYBRID_ALT_BRAKEHOLD = 4
+  # Nidec longitudinal mode for serial steering cars (see nidec_long/). Neither bit set = "mapped" (default)
+  NIDEC_LONG_STOCK = 8
+  NIDEC_LONG_ADAPTIVE = 16
 
 
 class HondaSafetyFlagsSP:

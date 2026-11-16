@@ -28,6 +28,7 @@ from opendbc.sunnypilot.car.rivian.values import RivianFlagsSP
 from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafetyFlagsSP
 from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP, TeslaSafetyFlagsSP
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
+from opendbc.sunnypilot.car.honda.nidec_long import apply_mode as apply_honda_nidec_long_mode, supports_nidec_long_modes
 
 
 class LatControlInputs(NamedTuple):
@@ -118,6 +119,13 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
   _initialize_radar_tracks(CP, CP_SP, can_recv, can_send)
   _initialize_stop_and_go(CP, CP_SP, params_dict)
   _initialize_toyota(CP, CP_SP, params_dict)
+  _initialize_honda_nidec_long(CP, CP_SP, params_dict)
+
+
+def _initialize_honda_nidec_long(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params_dict: dict[str, str]) -> None:
+  # serial steering MDX: STOCK (0) / MAPPED (1, default) / ADAPTIVE (2) longitudinal, see honda/nidec_long
+  if CP.brand == 'honda' and supports_nidec_long_modes(CP):
+    apply_honda_nidec_long_mode(CP, CP_SP, params_dict.get("HondaNidecLongMode", 1))
 
 
 def _initialize_custom_longitudinal_tuning(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
