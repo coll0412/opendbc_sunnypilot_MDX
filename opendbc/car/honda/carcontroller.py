@@ -107,6 +107,16 @@ def apply_serial_steering_torque_limits(apply_torque, apply_torque_last, driver_
   return apply_driver_steer_torque_limits(apply_torque, apply_torque_last, driver_torque, LIMITS)
 
 
+def serial_steering_pulse(apply_torque, near_max_frames, LIMITS):
+  # Returns the torque to send: apply_torque, or a short higher pulse after it has stayed near the limit.
+  # Only ever increases the magnitude of an already-limited torque, so driver override still cancels it
+  if near_max_frames < LIMITS.PULSE_ARM_FRAMES:
+    return apply_torque
+  if (near_max_frames - LIMITS.PULSE_ARM_FRAMES) % LIMITS.PULSE_PERIOD >= LIMITS.PULSE_FRAMES:
+    return apply_torque
+  return LIMITS.PULSE_TORQUE if apply_torque > 0 else -LIMITS.PULSE_TORQUE
+
+
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface,
                     EpsModCarController):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -133,6 +143,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.brake = 0.0
     self.last_torque = 0.0
     self.apply_torque_last = 0
+    self.near_max_frames = 0
 
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
@@ -174,7 +185,12 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
       if not CC.latActive:
         apply_torque = 0
       apply_torque = apply_serial_steering_torque_limits(apply_torque, self.apply_torque_last, CS.out.steeringTorque, SerialSteeringLimits)
-    self.apply_torque_last = apply_torque
+    self.apply_torque_last = apply_torque  # limiter state never includes the pulse
+
+    if self.CP.carFingerprint in SERIAL_STEERING:
+      near_max = CC.latActive and abs(apply_torque) >= SerialSteeringLimits.PULSE_THRESHOLD
+      self.near_max_frames = self.near_max_frames + 1 if near_max else 0
+      apply_torque = serial_steering_pulse(apply_torque, self.near_max_frames, SerialSteeringLimits)
 
     # Send CAN commands
     can_sends = []

@@ -74,6 +74,15 @@ class SerialSteeringLimits:
   STEER_DRIVER_MULTIPLIER = 18
   STEER_DRIVER_FACTOR = 1
 
+  # Near-max torque pulse: when openpilot is held near STEER_MAX, briefly command more torque. The wheel jiggles,
+  # warning the driver that steering is near its limit, and the EPS gives its most torque. The EPS faults after
+  # ~6 consecutive LIN frames above 241 (board notes, tested at 250/251), so pulses are short and spaced out
+  PULSE_THRESHOLD = 229  # start counting once |torque| is at least this
+  PULSE_ARM_FRAMES = 20  # near-max time before pulsing starts (0.2 s)
+  PULSE_TORQUE = 250     # pulse magnitude; the board's LSB wiggle may add 1
+  PULSE_FRAMES = 3       # pulse length (30 ms), half the EPS fault limit
+  PULSE_PERIOD = 10      # frames between pulse starts (100 ms, 10 Hz jiggle)
+
 
 class HondaSafetyFlags(IntFlag):
   ALT_BRAKE = 1
