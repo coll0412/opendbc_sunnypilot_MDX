@@ -3,7 +3,8 @@ import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.honda import hondacan
-from opendbc.car.honda.values import CAR, CruiseButtons, HondaFlags, CarControllerParams, SERIAL_STEERING, SerialSteeringLimits
+from opendbc.car.honda.values import CAR, CruiseButtons, HondaFlags, CarControllerParams, SERIAL_STEERING, SerialSteeringLimits, \
+                                     SerialSteeringLongitudinal
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 
@@ -244,6 +245,19 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                      np.clip(CS.out.vEgo + 5.0, 0.0, 100.0)]
       pcm_speed = float(np.interp(gas - brake, pcm_speed_BP, pcm_speed_V))
       pcm_accel = int(1.0 * self.params.NIDEC_GAS_MAX)
+    elif self.CP.carFingerprint in SERIAL_STEERING:
+      # MDX (after the MVL fork's Nidec rework): a continuous PCM speed target instead of the stepped map, which sent
+      # 0 or ~vEgo+5 m/s for small accel changes near the set speed (surge/lift cycling), and a gas limit that includes
+      # aerodynamic drag, so holding speed doesn't depend on the PID integrator (which wound up during the ~1.3 s
+      # throttle delay and overshot). Braking is unchanged
+      L = SerialSteeringLongitudinal
+      pcm_speed = float(np.clip(CS.out.vEgo + L.SPEED_LEAD_TIME * accel, 0.0, 100.0))
+      # the PCM is itself a speed servo: never ask it for more than just above the set speed, so it eases into the
+      # set speed on its own instead of being driven past it by a large lead
+      if hud_control.speedVisible and hud_control.setSpeed > 0.:
+        pcm_speed = min(pcm_speed, hud_control.setSpeed + L.SET_SPEED_MARGIN)
+      drag = float(np.interp(CS.out.vEgo, L.DRAG_BP, L.DRAG_V))
+      pcm_accel = int(np.clip(((accel + drag) / 1.44) / max_accel, 0.0, 1.0) * self.params.NIDEC_GAS_MAX)
     else:
       pcm_speed_V = [0.0,
                      np.clip(CS.out.vEgo - 2.0, 0.0, 100.0),

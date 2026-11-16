@@ -5,7 +5,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.values import CarControllerParams, HondaFlags, CAR, HondaSafetyFlags, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS, \
-                                     SERIAL_STEERING
+                                     SERIAL_STEERING, SerialSteeringLongitudinal
 from opendbc.car.honda.carcontroller import CarController
 from opendbc.car.honda.carstate import CarState
 from opendbc.car.honda.radar_interface import RadarInterface
@@ -185,6 +185,8 @@ class CarInterface(CarInterfaceBase):
       # Measured from drive logs (actuators.accel vs aEgo): brakes respond in ~0.5 s, throttle through the PCM in ~1.5 s.
       # With the 0.15 s default the PID winds up during the throttle lag, overshoots, then cycles. 0.5 s matches the brakes
       ret.longitudinalActuatorDelay = 0.5
+      ret.longitudinalTuning.kiBP = SerialSteeringLongitudinal.KI_BP
+      ret.longitudinalTuning.kiV = SerialSteeringLongitudinal.KI_V
 
     else:
       ret.steerActuatorDelay = 0.15

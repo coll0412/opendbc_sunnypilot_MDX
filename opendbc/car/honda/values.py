@@ -93,6 +93,18 @@ class SerialSteeringLimits:
   PULSE_PERIOD = 10      # frames between pulse starts (100 ms, 10 Hz jiggle)
 
 
+# Longitudinal for the serial steering MDX (Nidec PCM cruise), simplified from the MVL fork's Nidec controller.
+# Drive logs: throttle responds ~1.3 s after the accel command (brakes ~0.2 s), and holding speed needs ~0.3 m/s^2
+# at 65 mph, which the stock mapping left to the PID integrator
+class SerialSteeringLongitudinal:
+  SPEED_LEAD_TIME = 4.0                       # PCM_SPEED = vEgo + this * accel (s); MVL speedfactor default
+  SET_SPEED_MARGIN = 0.5                      # m/s (~1 mph): PCM_SPEED never exceeds the set speed by more than this
+  DRAG_BP = [0.0, 13.4, 22.4, 31.3, 40.2]     # m/s
+  DRAG_V = [0.000, 0.049, 0.136, 0.267, 0.441]  # m/s^2 of drag added to the gas limit (MVL wind_brake_ms2)
+  KI_BP = [0., 5., 35.]
+  KI_V = [0.6, 0.4, 0.25]                     # half of the Nidec default: the integrator no longer carries drag
+
+
 class HondaSafetyFlags(IntFlag):
   ALT_BRAKE = 1
   BOSCH_LONG = 2
