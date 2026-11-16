@@ -107,6 +107,16 @@ def apply_serial_steering_torque_limits(apply_torque, apply_torque_last, driver_
   return apply_driver_steer_torque_limits(apply_torque, apply_torque_last, driver_torque, LIMITS)
 
 
+def update_serial_steering_request_hold(hold_frames, driver_torque, eps_fault, LIMITS):
+  # Returns the remaining frames to keep STEER_TORQUE_REQUEST off; the request may only be sent at 0
+  driver_torque = abs(driver_torque)
+  if eps_fault or driver_torque >= LIMITS.REQUEST_RELEASE_TORQUE:
+    return LIMITS.REQUEST_HOLD_FRAMES
+  if hold_frames > 0 and driver_torque >= LIMITS.REQUEST_RESUME_TORQUE:
+    return LIMITS.REQUEST_HOLD_FRAMES  # still steering: restart the countdown
+  return max(hold_frames - 1, 0)
+
+
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface,
                     EpsModCarController):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -133,6 +143,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.brake = 0.0
     self.last_torque = 0.0
     self.apply_torque_last = 0
+    self.steer_request_hold = 0
 
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
@@ -169,9 +180,15 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     if self.eps_mod_lookup is not None:
       apply_torque = EpsModCarController.get_apply_torque(self, limited_torque)
 
-    # Serial steering (LKAS/CAN adapter board): limit torque by driver torque and rate, like other torque-limited brands
+    # Serial steering (LKAS/CAN adapter board): release the steer request while the driver is steering hard or the
+    # EPS reports a fault, then limit torque by driver torque and rate, like other torque-limited brands
+    steer_request = CC.latActive
     if self.CP.carFingerprint in SERIAL_STEERING:
-      if not CC.latActive:
+      eps_fault = CS.out.steerFaultTemporary or CS.out.steerFaultPermanent
+      self.steer_request_hold = update_serial_steering_request_hold(self.steer_request_hold, CS.out.steeringTorque, eps_fault,
+                                                                    SerialSteeringLimits)
+      steer_request = CC.latActive and self.steer_request_hold == 0
+      if not steer_request:
         apply_torque = 0
       apply_torque = apply_serial_steering_torque_limits(apply_torque, self.apply_torque_last, CS.out.steeringTorque, SerialSteeringLimits)
     self.apply_torque_last = apply_torque
@@ -185,7 +202,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
         can_sends.append(make_tester_present_msg(0x18DAB0F1, 1, suppress_response=True))
 
     # Send steering command.
-    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, CC.latActive, self.tja_control))
+    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, steer_request, self.tja_control))
 
     # wind brake from air resistance decel at high speed
     wind_brake = np.interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15])
