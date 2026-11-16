@@ -82,6 +82,16 @@ class SerialSteeringLimits:
   REQUEST_RESUME_TORQUE = 50      # request again once driver torque is below this (hysteresis, no delay)
   EPS_FAULT_HOLD_FRAMES = 50      # after any EPS fault status, keep the request off for 0.5 s
 
+  # Near-max torque pulse (haptic): when openpilot is held near STEER_MAX, briefly command more torque. The wheel
+  # jiggles, warning the driver that steering is near its limit. Board notes: 240 is fine continuously, the EPS
+  # faults after ~6 consecutive frames above 241 (tested at 250/251). Drive log 19:51:24-25: four 3-frame pulses at
+  # 250 with EPS status normal throughout
+  PULSE_THRESHOLD = 229  # start counting once |torque| is at least this
+  PULSE_ARM_FRAMES = 20  # near-max time before pulsing starts (0.2 s)
+  PULSE_TORQUE = 250     # pulse magnitude; the board's LSB wiggle may add 1. The board can send at most 255
+  PULSE_FRAMES = 3       # pulse length (30 ms), half the EPS fault limit; do not exceed 4
+  PULSE_PERIOD = 10      # frames between pulse starts (100 ms, 10 Hz jiggle)
+
 
 class HondaSafetyFlags(IntFlag):
   ALT_BRAKE = 1
