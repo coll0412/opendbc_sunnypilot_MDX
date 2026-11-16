@@ -66,8 +66,8 @@ BO_ 521 LIN_DATA_IN: 8 XXX
 CM_ SG_ 228 SEND_MOTOR_TORQUE_TO_CAN "LIN board option bits (byte 2, bits 0-6); openpilot leaves them 0";
 CM_ SG_ 228 DISABLE_LIN_BOARD_WIGGLE_BIT "1 disables the board's LSB wiggle of the LIN steer value";
 CM_ SG_ 399 STEER_TORQUE_SENSOR "driver torque, sign inverted by the board so left is positive";
-CM_ SG_ 399 STEER_STATUS "bits 0-2: EPS LIN byte 2 bits 0-2, bit 3: EPS LIN byte 0 bit 4";
+CM_ SG_ 399 STEER_STATUS "bits 0-2: EPS LIN byte 2 bits 0-2, bit 3: EPS LIN byte 0 bit 4. 7 = driver overpowering LKAS: openpilot must drop the steer request (temporary fault), or the camera latches FCM/LKAS problem until restart";
 CM_ SG_ 399 OP_STEERING_CONTROL_MSG_ACTIVE "set when the board is receiving STEERING_CONTROL (0xE4)";
 CM_ SG_ 521 LKAS_ENABLED "raw LIN data, sent by the board while openpilot is not steering";
 
-VAL_ 399 STEER_STATUS 11 "fault_1" 7 "no_torque_alert_2" 2 "lkas_fatal_error" 1 "no_torque_alert_1" 0 "normal" ;
+VAL_ 399 STEER_STATUS 11 "fault_1" 7 "driver_override" 2 "lkas_fatal_error" 1 "no_torque_alert_1" 0 "normal" ;
