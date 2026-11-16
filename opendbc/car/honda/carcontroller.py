@@ -107,14 +107,16 @@ def apply_serial_steering_torque_limits(apply_torque, apply_torque_last, driver_
   return apply_driver_steer_torque_limits(apply_torque, apply_torque_last, driver_torque, LIMITS)
 
 
-def update_serial_steering_request_hold(hold_frames, driver_torque, eps_fault, LIMITS):
-  # Returns the remaining frames to keep STEER_TORQUE_REQUEST off; the request may only be sent at 0
+def update_serial_steering_request_release(released, fault_hold, driver_torque, eps_fault, LIMITS):
+  # Returns (released, fault_hold). STEER_TORQUE_REQUEST may only be sent when not released and fault_hold is 0.
+  # Released on a hard take-over, resumed with hysteresis once the driver eases off; held off briefly after EPS faults
   driver_torque = abs(driver_torque)
-  if eps_fault or driver_torque >= LIMITS.REQUEST_RELEASE_TORQUE:
-    return LIMITS.REQUEST_HOLD_FRAMES
-  if hold_frames > 0 and driver_torque >= LIMITS.REQUEST_RESUME_TORQUE:
-    return LIMITS.REQUEST_HOLD_FRAMES  # still steering: restart the countdown
-  return max(hold_frames - 1, 0)
+  if driver_torque >= LIMITS.REQUEST_RELEASE_TORQUE:
+    released = True
+  elif driver_torque < LIMITS.REQUEST_RESUME_TORQUE:
+    released = False
+  fault_hold = LIMITS.EPS_FAULT_HOLD_FRAMES if eps_fault else max(fault_hold - 1, 0)
+  return released, fault_hold
 
 
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface,
@@ -143,7 +145,8 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.brake = 0.0
     self.last_torque = 0.0
     self.apply_torque_last = 0
-    self.steer_request_hold = 0
+    self.steer_request_released = False
+    self.steer_request_fault_hold = 0
 
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
@@ -180,14 +183,14 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     if self.eps_mod_lookup is not None:
       apply_torque = EpsModCarController.get_apply_torque(self, limited_torque)
 
-    # Serial steering (LKAS/CAN adapter board): release the steer request while the driver is steering hard or the
-    # EPS reports a fault, then limit torque by driver torque and rate, like other torque-limited brands
+    # Serial steering (LKAS/CAN adapter board): release the steer request on a hard driver take-over or an EPS fault,
+    # then limit torque by driver torque and rate, like other torque-limited brands
     steer_request = CC.latActive
     if self.CP.carFingerprint in SERIAL_STEERING:
       eps_fault = CS.out.steerFaultTemporary or CS.out.steerFaultPermanent
-      self.steer_request_hold = update_serial_steering_request_hold(self.steer_request_hold, CS.out.steeringTorque, eps_fault,
-                                                                    SerialSteeringLimits)
-      steer_request = CC.latActive and self.steer_request_hold == 0
+      self.steer_request_released, self.steer_request_fault_hold = update_serial_steering_request_release(
+        self.steer_request_released, self.steer_request_fault_hold, CS.out.steeringTorque, eps_fault, SerialSteeringLimits)
+      steer_request = CC.latActive and not self.steer_request_released and self.steer_request_fault_hold == 0
       if not steer_request:
         apply_torque = 0
       apply_torque = apply_serial_steering_torque_limits(apply_torque, self.apply_torque_last, CS.out.steeringTorque, SerialSteeringLimits)

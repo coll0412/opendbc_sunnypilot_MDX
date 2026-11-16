@@ -77,9 +77,10 @@ class SerialSteeringLimits:
   # Steer request release, like the stock camera: the EPS reports a fault (STEER_STATUS 2/7) if the steer request
   # stays on while the driver applies ~100+ torque, and re-asserting the request then makes the camera latch
   # FCM/LKAS problem until restart (drive logs 2026-11-15 19:51:25 freeway and 20:45:07 left turn)
-  REQUEST_RELEASE_TORQUE = 50  # drop the request above this driver torque (openpilot torque is already 0 at ~38)
-  REQUEST_RESUME_TORQUE = 25   # driver torque must stay below this (= STEER_THRESHOLD) ...
-  REQUEST_HOLD_FRAMES = 50     # ... for this long (0.5 s), also after any EPS fault status, before requesting again
+  # In those logs every EPS fault started at 101-116 driver torque; normal driving stays below ~50
+  REQUEST_RELEASE_TORQUE = 80     # drop the request at or above this driver torque (hard take-over)
+  REQUEST_RESUME_TORQUE = 50      # request again once driver torque is below this (hysteresis, no delay)
+  EPS_FAULT_HOLD_FRAMES = 50      # after any EPS fault status, keep the request off for 0.5 s
 
 
 class HondaSafetyFlags(IntFlag):
