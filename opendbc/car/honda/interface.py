@@ -182,6 +182,9 @@ class CarInterface(CarInterfaceBase):
       # the LKAS/CAN adapter board adds latency between STEERING_CONTROL and the EPS (LIN, 9600 baud)
       ret.steerActuatorDelay = 0.3
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+      # Measured from drive logs (actuators.accel vs aEgo): brakes respond in ~0.5 s, throttle through the PCM in ~1.5 s.
+      # With the 0.15 s default the PID winds up during the throttle lag, overshoots, then cycles. 0.5 s matches the brakes
+      ret.longitudinalActuatorDelay = 0.5
 
     else:
       ret.steerActuatorDelay = 0.15
